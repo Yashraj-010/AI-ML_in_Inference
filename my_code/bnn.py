@@ -12,10 +12,12 @@ from pyro.infer.autoguide import AutoNormalizingFlow
 from pyro.distributions.transforms import affine_autoregressive
 
 import numpy as np
+import os
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 pyro.enable_validation(False)
 torch.set_default_dtype(torch.float32)
+torch.backends.cudnn.benchmark = True
 
 class Data(Dataset):
 
@@ -31,41 +33,58 @@ class Data(Dataset):
 
 class BayesianNN(PyroModule):
 
-    def __init__(self, input_dim=3, hidden=[64, 64], output_dim=7):
+    def __init__(self, input_dim=3, hidden=[64, 64], output_dim=7, prior_scale=0.5):
         super().__init__()
 
-        self.fc1 = PyroModule[nn.Linear](input_dim, hidden[0])
-        self.fc1.weight = PyroSample(
-            dist.Normal(0., 0.5).expand([hidden[0], input_dim]).to_event(2)
-        )
-        self.fc1.bias = PyroSample(
-            dist.Normal(0., 0.5).expand([hidden[0]]).to_event(1)
-        )
+        self.hidden_dims = hidden
 
-        self.fc2 = PyroModule[nn.Linear](hidden[0], hidden[1])
-        self.fc2.weight = PyroSample(
-            dist.Normal(0., 0.5).expand([hidden[1], hidden[0]]).to_event(2)
-        )
-        self.fc2.bias = PyroSample(
-            dist.Normal(0., 0.5).expand([hidden[1]]).to_event(1)
-        )
+        self.layers = PyroModule[nn.ModuleList]([])
 
-        self.out = PyroModule[nn.Linear](hidden[1], output_dim)
+        prev_dim = input_dim
+
+        for h_dim in hidden:
+
+            layer = PyroModule[nn.Linear](prev_dim, h_dim)
+
+            layer.weight = PyroSample(
+                dist.Normal(0., prior_scale)
+                .expand([h_dim, prev_dim])
+                .to_event(2)
+            )
+
+            layer.bias = PyroSample(
+                dist.Normal(0., prior_scale)
+                .expand([h_dim])
+                .to_event(1)
+            )
+
+            self.layers.append(layer)
+
+            prev_dim = h_dim
+
+        self.out = PyroModule[nn.Linear](prev_dim, output_dim)
+
         self.out.weight = PyroSample(
-            dist.Normal(0., 0.5).expand([output_dim, hidden[1]]).to_event(2)
-        )
-        self.out.bias = PyroSample(
-            dist.Normal(0., 0.5).expand([output_dim]).to_event(1)
+            dist.Normal(0., prior_scale)
+            .expand([output_dim, prev_dim])
+            .to_event(2)
         )
 
+        self.out.bias = PyroSample(
+            dist.Normal(0., prior_scale)
+            .expand([output_dim])
+            .to_event(1)
+        )
+
+        # Observation noise
         self.sigma = PyroSample(dist.Uniform(0., 1.))
 
     def forward(self, x, y=None):
 
-        x = x.to(device)
+        # Pass through hidden layers
+        for layer in self.layers:
+            x = torch.relu(layer(x))
 
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
         mean = self.out(x)
 
         sigma = self.sigma
@@ -81,20 +100,25 @@ class BayesianNN(PyroModule):
 
 class MCMCTrain():
 
-        def __init__(self, model, training_data, num_samples=1000, warmup_steps=200, path = "MCMC_model" ):
-            self.model = model
+        def __init__(self, hidden_layers, training_data, num_samples=1000, warmup_steps=200, path = "MCMC_model" ):
+            # self.model = model
+            self.hidden_layers = hidden_layers
+
+            self.model = BayesianNN(hidden=self.hidden_layers) #.to(device)
             self.num_samples = num_samples
             self.warmup_steps = warmup_steps
-            self.training_input = training_data[0].to(device)
-            self.training_target = training_data[1].to(device)
+            self.training_input = torch.from_numpy(training_data[0]).float() #.to(device)
+            self.training_target = torch.from_numpy(training_data[1]).float() #.to(device)
             self.path = path
     
         def train(self,):
             nuts_kernel = NUTS(self.model, jit_compile=True)
             mcmc = MCMC(nuts_kernel, num_samples=self.num_samples, warmup_steps=self.warmup_steps)
+            print("Starting MCMC sampling...")
             mcmc.run(self.training_input, self.training_target)
             samples = mcmc.get_samples()
-
+            print("MCMC sampling completed.")
+            print("Saving the model...")
             self.save_mcmc(samples)
 
             return samples
@@ -113,7 +137,7 @@ class MCMCTrain():
             
             filename = self.path + "/best_mcmc_model.pth"
 
-            torch.save(checkpoint, self.save_path)
+            torch.save(checkpoint, filename)
             print("Best MCMC model saved at: ", filename)
 
 class SVITrain():
@@ -159,9 +183,9 @@ class SVITrain():
 
                 train_losses.append(epoch_loss)
             
-            self.save_svi(losses)
+            self.save_svi(train_losses)
 
-        return losses, self.model, self.guide
+            return train_losses, self.model, self.guide
 
         def save_svi(self, losses):
             if not os.path.exists(self.path):
@@ -190,7 +214,7 @@ class TrainBNN():
 
     """
 
-    def __init__(self, method, training_data, hidden_layers, num_samples=1000, warmup_steps=200, batch_size=32, epochs=100, learning_rate=0.001, path = "BNN_model" ):
+    def __init__(self, method, training_data, hidden_layers, num_samples=1000, warmup_steps=200, batch_size=32, epochs=100, learning_rate=0.001, patience=10, path = "BNN_model" ):
         self.method = method
         self.training_data = training_data
         self.hidden_layers = hidden_layers
@@ -204,8 +228,8 @@ class TrainBNN():
 
     def train(self,):
         if self.method == "MCMC":
-            model = BayesianNN(hidden=self.hidden_layers).to(device)
-            mcmc_trainer = MCMCTrain(model=model, 
+            # model = BayesianNN(hidden=self.hidden_layers).to(device)
+            mcmc_trainer = MCMCTrain(hidden_layers=self.hidden_layers, 
                                     training_data=self.training_data, 
                                     num_samples=self.num_samples, 
                                     warmup_steps=self.warmup_steps,
@@ -225,7 +249,7 @@ class TrainBNN():
             return svi_trainer.train()
 
 
-class BNNPredictor:
+class BNNPredict():
     """
     Unified predictor for SVI and MCMC trained Bayesian Neural Networks
     """
