@@ -33,9 +33,12 @@ class Data(Dataset):
 
 class BayesianNN(PyroModule):
 
-    def __init__(self, input_dim=3, hidden=[64, 64], output_dim=7, prior_scale=0.5):
+    def __init__(self, input_dim=3, hidden=[64, 64], output_dim=7,
+                 prior_scale=0.5, device="cpu"):
+
         super().__init__()
 
+        self.device = device
         self.hidden_dims = hidden
 
         self.layers = PyroModule[nn.ModuleList]([])
@@ -46,42 +49,49 @@ class BayesianNN(PyroModule):
 
             layer = PyroModule[nn.Linear](prev_dim, h_dim)
 
+            weight_loc = torch.zeros(h_dim, prev_dim, device=device)
+            weight_scale = torch.full((h_dim, prev_dim), prior_scale, device=device)
+
+            bias_loc = torch.zeros(h_dim, device=device)
+            bias_scale = torch.full((h_dim,), prior_scale, device=device)
+
             layer.weight = PyroSample(
-                dist.Normal(0., prior_scale)
-                .expand([h_dim, prev_dim])
-                .to_event(2)
+                dist.Normal(weight_loc, weight_scale).to_event(2)
             )
 
             layer.bias = PyroSample(
-                dist.Normal(0., prior_scale)
-                .expand([h_dim])
-                .to_event(1)
+                dist.Normal(bias_loc, bias_scale).to_event(1)
             )
 
             self.layers.append(layer)
-
             prev_dim = h_dim
 
         self.out = PyroModule[nn.Linear](prev_dim, output_dim)
 
+        w_loc = torch.zeros(output_dim, prev_dim, device=device)
+        w_scale = torch.full((output_dim, prev_dim), prior_scale, device=device)
+
+        b_loc = torch.zeros(output_dim, device=device)
+        b_scale = torch.full((output_dim,), prior_scale, device=device)
+
         self.out.weight = PyroSample(
-            dist.Normal(0., prior_scale)
-            .expand([output_dim, prev_dim])
-            .to_event(2)
+            dist.Normal(w_loc, w_scale).to_event(2)
         )
 
         self.out.bias = PyroSample(
-            dist.Normal(0., prior_scale)
-            .expand([output_dim])
-            .to_event(1)
+            dist.Normal(b_loc, b_scale).to_event(1)
         )
 
         # Observation noise
-        self.sigma = PyroSample(dist.Uniform(0., 1.))
+        self.sigma = PyroSample(
+            dist.Uniform(
+                torch.tensor(0., device=device),
+                torch.tensor(1., device=device)
+            )
+        )
 
     def forward(self, x, y=None):
 
-        # Pass through hidden layers
         for layer in self.layers:
             x = torch.relu(layer(x))
 
@@ -104,11 +114,11 @@ class MCMCTrain():
             # self.model = model
             self.hidden_layers = hidden_layers
 
-            self.model = BayesianNN(hidden=self.hidden_layers) #.to(device)
+            self.model = BayesianNN(hidden=self.hidden_layers, device=device)
             self.num_samples = num_samples
             self.warmup_steps = warmup_steps
-            self.training_input = torch.from_numpy(training_data[0]).float() #.to(device)
-            self.training_target = torch.from_numpy(training_data[1]).float() #.to(device)
+            self.training_input = torch.from_numpy(training_data[0]).float().to(device)
+            self.training_target = torch.from_numpy(training_data[1]).float().to(device)
             self.path = path
     
         def train(self,):
@@ -142,9 +152,80 @@ class MCMCTrain():
 
 class SVITrain():
 
-        def __init__(self, training_data, hidden_layers, batch_size=32, epochs=100, learning_rate=0.001, patience = 10 , path = "SVI_model" ):
+        # def __init__(self, training_data, hidden_layers, batch_size=32, epochs=100, learning_rate=0.001, patience = 10 , path = "SVI_model" ):
+        #     self.training_data = training_data
+        #     # self.training_target = training_data[1].to(device)
+        #     self.hidden_layers = hidden_layers
+        #     self.batch_size = batch_size
+        #     self.epochs = epochs
+        #     self.learning_rate = learning_rate
+        #     self.patience = patience
+        #     self.path = path
+
+        #     cpu_model = BayesianNN(hidden=self.hidden_layers, device="cpu")
+        #     self.guide = AutoNormalizingFlow(
+        #         cpu_model,
+        #         lambda latent_dim: affine_autoregressive(
+        #             latent_dim, 
+        #             hidden_dims=[latent_dim, latent_dim]
+        #         )
+        #     )
+
+        #     # 2. Run a dummy forward pass with a single CPU data point to FORCE lazy initialization
+        #     x_dummy = torch.tensor(self.training_data[0][:1], dtype=torch.float32)
+        #     y_dummy = torch.tensor(self.training_data[1][:1], dtype=torch.float32)
+        #     self.guide(x_dummy, y_dummy)
+
+        #     self.guide.to(device)
+        #     pyro.get_param_store().to(device)
+
+        #     # 4. Initialize the REAL model directly on the GPU and re-link the guide
+        #     self.model = BayesianNN(hidden=self.hidden_layers, device=device).to(device)
+        #     self.guide.model = self.model
+            
+        #     self.optimizer = Adam({"lr": self.learning_rate})
+        #     self.svi = SVI(
+        #         self.model, 
+        #         self.guide, 
+        #         self.optimizer, 
+        #         loss=Trace_ELBO(num_particles=5, vectorize_particles=True)
+        #     )
+
+
+        #     self.model = BayesianNN(
+        #                             hidden=self.hidden_layers,
+        #                             device=device
+        #                             ).to(device)
+
+        #     # # self.model = BayesianNN(hidden=self.hidden_layers).to(device)
+        #     # print("Moving model to device: ", device)
+        #     # all_on_cuda = all(p.is_cuda for p in self.model.parameters())
+        #     # print(f"Are all model parameters on CUDA? {all_on_cuda}")
+            
+        #     # # self.guide = AutoNormalizingFlow(self.model,lambda latent: affine_autoregressive(latent, hidden_dims=self.hidden_layers)).to(device)
+        #     # self.guide = AutoNormalizingFlow(
+        #     #     self.model,
+        #     #     lambda latent_dim: affine_autoregressive(
+        #     #         latent_dim, 
+        #     #         hidden_dims=[latent_dim, latent_dim]
+        #     #     )
+        #     # ).to(device)
+        #     # print("Moving guide to device: ", device)
+        #     # all_on_cuda = all(p.is_cuda for p in self.guide.parameters())
+        #     # print(f"Are all guide parameters on CUDA? {all_on_cuda}")
+
+        #     # # pyro.clear_param_store()
+
+        #     # # pyro.get_param_store().to(device)
+            
+        #     # self.optimizer = Adam({"lr": self.learning_rate})
+        #     # # pyro.clear_param_store()
+        #     # self.svi = SVI(self.model, self.guide, self.optimizer, loss=Trace_ELBO(num_particles=5, vectorize_particles=True))
+        #     # # all_on_cuda = all(p.is_cuda for p in self.svi.parameters())
+        #     # # print(f"Are all svi parameters on CUDA? {all_on_cuda}")
+
+        def __init__(self, training_data, hidden_layers, batch_size=32, epochs=100, learning_rate=0.001, patience=10, path="SVI_model"):
             self.training_data = training_data
-            # self.training_target = training_data[1].to(device)
             self.hidden_layers = hidden_layers
             self.batch_size = batch_size
             self.epochs = epochs
@@ -152,11 +233,38 @@ class SVITrain():
             self.patience = patience
             self.path = path
 
-            self.model = BayesianNN(hidden=self.hidden_layers).to(device)
-            self.guide = AutoNormalizingFlow(self.model,lambda latent: affine_autoregressive(latent, hidden_dims=[64, 64]))
-            self.optimizer = Adam({"lr": self.learning_rate})
+            pyro.clear_param_store()
 
-            self.svi = SVI(self.model, self.guide, self.optimizer, loss=Trace_ELBO(num_particles=5, vectorize_particles=True))
+            # 1. Initialize the model securely on the GPU
+            self.model = BayesianNN(hidden=self.hidden_layers, device=device).to(device)
+            
+            # 2. Initialize the guide lazily
+            self.guide = AutoNormalizingFlow(
+                self.model,
+                lambda latent_dim: affine_autoregressive(
+                    latent_dim, 
+                    hidden_dims=[latent_dim, latent_dim]
+                )
+            )
+
+            # 3. Trigger the lazy initialization with a dummy pass.
+            # (The AutoGuide will spawn its networks on the CPU initially)
+            x_dummy = torch.tensor(self.training_data[0][:1], dtype=torch.float32).to(device)
+            y_dummy = torch.tensor(self.training_data[1][:1], dtype=torch.float32).to(device)
+            self.guide(x_dummy, y_dummy)
+
+            # 4. THE FIX: Move the guide to the device AFTER the dummy pass.
+            # This pushes the initialized networks to CUDA *and* automatically syncs the ParamStore.
+            self.guide.to(device)
+            
+            self.optimizer = Adam({"lr": self.learning_rate})
+            self.svi = SVI(
+                self.model, 
+                self.guide, 
+                self.optimizer, 
+                loss=Trace_ELBO(num_particles=5, vectorize_particles=False)
+            )
+
 
         def train(self,):
             train_losses = []
@@ -169,8 +277,9 @@ class SVITrain():
 
                 for x, y in train_loader:
                     x = x.to(device, non_blocking=True)
+                    print("x device: ", x.device)
                     y = y.to(device, non_blocking=True)
-                    
+                    print("y device: ", y.device)
                     loss = self.svi.step(x, y)
                     # train_losses.append(loss)
                     
