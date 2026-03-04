@@ -110,7 +110,7 @@ class BayesianNN(PyroModule):
 
 class MCMCTrain():
 
-        def __init__(self, hidden_layers, training_data, num_samples=1000, warmup_steps=200, path = "MCMC_model" ):
+        def __init__(self, hidden_layers, training_data, num_samples=1000, warmup_steps=200, path = "MCMC_BNN_model" ):
             # self.model = model
             self.hidden_layers = hidden_layers
 
@@ -224,7 +224,7 @@ class SVITrain():
         #     # # all_on_cuda = all(p.is_cuda for p in self.svi.parameters())
         #     # # print(f"Are all svi parameters on CUDA? {all_on_cuda}")
 
-        def __init__(self, training_data, hidden_layers, batch_size=32, epochs=100, learning_rate=0.001, patience=10, path="SVI_model"):
+        def __init__(self, training_data, hidden_layers, batch_size=32, epochs=100, learning_rate=0.001, patience=10, path="BNN_SVI_model"):
             self.training_data = training_data
             self.hidden_layers = hidden_layers
             self.batch_size = batch_size

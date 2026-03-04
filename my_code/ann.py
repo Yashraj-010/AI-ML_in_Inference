@@ -90,7 +90,7 @@ def TrainANN(training_data, validation_data, hidden_layers=[128,128,64], batch_s
 
     print("Starting training...")
 
-    for epoch in range(100):
+    for epoch in range(epochs):
             
         model.train()
         train_loss = 0.0   
