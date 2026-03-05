@@ -277,9 +277,9 @@ class SVITrain():
 
                 for x, y in train_loader:
                     x = x.to(device, non_blocking=True)
-                    print("x device: ", x.device)
+                    # print("x device: ", x.device)
                     y = y.to(device, non_blocking=True)
-                    print("y device: ", y.device)
+                    # print("y device: ", y.device)
                     loss = self.svi.step(x, y)
                     # train_losses.append(loss)
                     
