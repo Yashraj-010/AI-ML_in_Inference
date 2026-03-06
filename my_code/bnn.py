@@ -381,15 +381,12 @@ class BNNPredict():
 
         self._load_model()
 
-    # ============================
-    # Load model depending on method
-    # ============================
 
     def _load_model(self):
 
         hidden_layers = self.checkpoint["hidden_layers"]
 
-        self.model = BayesianNN(hidden=hidden_layers).to(self.device)
+        self.model = BayesianNN(hidden=hidden_layers, device=self.device)
 
         if self.method == "SVI":
 
@@ -410,9 +407,6 @@ class BNNPredict():
         else:
             raise ValueError("Unknown method in checkpoint")
 
-    # ============================
-    # Prediction
-    # ============================
 
     def predict(self, X, num_samples=200, return_numpy=True):
 
@@ -427,7 +421,7 @@ class BNNPredict():
                 return_sites=("obs", "_RETURN")
             )
 
-        else:  # MCMC
+        else:
 
             predictive = Predictive(
                 self.model,
