@@ -6,16 +6,18 @@ More details about the school can be found here: **[School Website](https://scit
 ---
 
 ## Structure
+```
 ├── Code/ # ANN, BNN, and inference implementations
 ├── Data/ # Training and inference datasets
-├── Models/ # Pre-trained ANN and BNN models
+├── ANN_pretrained_model/ # Pre-trained ANN model
+├── MCMC_pretrained_model/ # Pre-trained BNN model using MCMC 
 ├── Tutorial.ipynb # Main tutorial notebook
 └── README.md
-
+```
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ```bash
 git clone https://github.com/Yashraj-010/AI-ML_in_Inference.git
@@ -23,5 +25,5 @@ cd AI-ML_in_Inference
 jupyter notebook
 ```
 
-### Open ``Tutorial.ipynb`` for the main tutorial. The necessary libraries are mentioned in the notebook itself. You can chose to make a different Conda env.
+#### Open ``tutorial.ipynb`` for the main tutorial. The necessary libraries are mentioned in the notebook itself. You can choose to make a different Conda env.
 
